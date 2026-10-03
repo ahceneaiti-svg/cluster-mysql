@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mysql-slave-config
+  namespace: mysql-repl
+data:
+  my.cnf: |
+    [mysqld]
+    server-id=2
+    log-bin=mysql-bin
+    relay-log=relay-log
+    gtid_mode=ON
+    enforce-gtid-consistency=ON
+    binlog_format=ROW
