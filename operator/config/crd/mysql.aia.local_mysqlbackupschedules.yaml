@@ -1,0 +1,216 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.22.0
+  name: mysqlbackupschedules.mysql.aia.local
+spec:
+  group: mysql.aia.local
+  names:
+    kind: MySQLBackupSchedule
+    listKind: MySQLBackupScheduleList
+    plural: mysqlbackupschedules
+    shortNames:
+    - mbs
+    singular: mysqlbackupschedule
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.schedule
+      name: Schedule
+      type: string
+    - jsonPath: .spec.suspend
+      name: Suspend
+      type: boolean
+    - jsonPath: .status.lastScheduleTime
+      name: Last
+      type: date
+    - jsonPath: .status.nextScheduleTime
+      name: Next
+      type: string
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: MySQLBackupSchedule crée des MySQLBackup selon un cron.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: MySQLBackupScheduleSpec planifie des backups récurrents.
+            properties:
+              keepLast:
+                default: 7
+                description: KeepLast nombre de backups Completed conservés (les plus
+                  anciens sont supprimés, fichier compris).
+                format: int32
+                minimum: 1
+                type: integer
+              schedule:
+                description: Schedule au format cron standard (5 champs) ou descripteur
+                  (@daily...).
+                type: string
+              suspend:
+                description: Suspend désactive la planification.
+                type: boolean
+              template:
+                description: Template du backup créé à chaque échéance.
+                properties:
+                  backoffLimit:
+                    default: 2
+                    description: BackoffLimit du Job.
+                    format: int32
+                    type: integer
+                  databases:
+                    description: Databases à sauvegarder. Vide = toutes les bases
+                      hors schémas système.
+                    items:
+                      type: string
+                    type: array
+                  image:
+                    default: mysql:8.0
+                    description: Image utilisée par le Job (doit contenir mysqldump).
+                    type: string
+                  resources:
+                    description: Resources du conteneur de backup.
+                    properties:
+                      claims:
+                        description: |-
+                          Claims lists the names of resources, defined in spec.resourceClaims,
+                          that are used by this container.
+
+                          This field depends on the
+                          DynamicResourceAllocation feature gate.
+
+                          This field is immutable. It can only be set for containers.
+                        items:
+                          description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                          properties:
+                            name:
+                              description: |-
+                                Name must match the name of one entry in pod.spec.resourceClaims of
+                                the Pod where this field is used. It makes that resource available
+                                inside a container.
+                              type: string
+                            request:
+                              description: |-
+                                Request is the name chosen for a request in the referenced claim.
+                                If empty, everything from the claim is made available, otherwise
+                                only the result of this request.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Limits describes the maximum amount of compute resources allowed.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Requests describes the minimum amount of compute resources required.
+                          If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                          otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                    type: object
+                  source:
+                    description: Source est le serveur à sauvegarder. Préférer le
+                      slave pour ne pas charger le master.
+                    properties:
+                      host:
+                        description: Host du serveur MySQL.
+                        type: string
+                      passwordKey:
+                        default: MYSQL_ROOT_PASSWORD
+                        description: PasswordKey est la clé du Secret contenant le
+                          mot de passe.
+                        type: string
+                      port:
+                        default: 3306
+                        description: Port du serveur MySQL.
+                        format: int32
+                        type: integer
+                      secretName:
+                        default: mysql-secret
+                        description: SecretName contient le mot de passe root.
+                        type: string
+                      user:
+                        default: root
+                        description: User MySQL.
+                        type: string
+                    required:
+                    - host
+                    type: object
+                  storage:
+                    description: StorageSpec décrit le PVC qui contient les dumps.
+                    properties:
+                      claimName:
+                        default: mysql-backups
+                        description: ClaimName est le nom du PVC (créé par l'opérateur
+                          s'il n'existe pas).
+                        type: string
+                      size:
+                        default: 1Gi
+                        description: Size est la taille demandée à la création du
+                          PVC.
+                        type: string
+                      storageClassName:
+                        description: StorageClassName est la StorageClass du PVC (défaut
+                          du cluster si vide).
+                        type: string
+                    type: object
+                required:
+                - source
+                type: object
+            required:
+            - schedule
+            - template
+            type: object
+          status:
+            properties:
+              lastBackupName:
+                type: string
+              lastScheduleTime:
+                format: date-time
+                type: string
+              nextScheduleTime:
+                format: date-time
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

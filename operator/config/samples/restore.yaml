@@ -1,0 +1,11 @@
+# Restaure demo-backup sur le master (le slave suit par réplication).
+apiVersion: mysql.aia.local/v1alpha1
+kind: MySQLRestore
+metadata:
+  name: demo-restore
+  namespace: mysql-repl
+spec:
+  backupName: demo-backup
+  target:
+    host: mysql-master.mysql-repl.svc.cluster.local
+  # databases: [appdb]   # vide = tout le dump

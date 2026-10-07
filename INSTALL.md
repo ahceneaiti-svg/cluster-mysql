@@ -21,6 +21,7 @@ mysql/
 │   ├── 03-configmap-slave.yaml  # my.cnf slave (server-id=2, binlog, GTID)
 │   ├── 04-master.yaml          # Service headless + StatefulSet master
 │   └── 05-slave.yaml           # Service headless + StatefulSet slave
+├── operator/                   # opérateur Backup/Restore (Go) — voir section 5
 ├── scripts/
 │   ├── setup-replication.sh    # configure CHANGE REPLICATION SOURCE + START REPLICA
 │   └── verify-replication.sh   # vérifie statut + test fonctionnel d'écriture/lecture
@@ -139,6 +140,75 @@ kubectl -n mysql-repl exec -i mysql-slave-0 -- mysql -uroot -prootpass123 -e "CR
 # -> doit renvoyer une erreur de type "--read-only"
 ```
 
+## 5. Backup / Restore avec l'opérateur
+
+L'opérateur (`operator/`, détails dans [operator/README.md](operator/README.md)) gère sauvegardes et restaurations via trois CRDs : `MySQLBackup` (`mbk`), `MySQLRestore` (`mrs`) et `MySQLBackupSchedule` (`mbs`).
+
+### 5.1 Déployer l'opérateur
+
+Prérequis supplémentaire : `go` ≥ 1.26 (uniquement pour `make generate`/`make build`, pas pour le déploiement).
+
+```bash
+cd operator
+make kind-load KIND_CLUSTER=<nom-du-cluster-kind>   # build + chargement de mysql-operator:dev
+make deploy                                         # CRDs + RBAC + Deployment
+kubectl -n mysql-operator-system get pods           # attendre Running
+```
+
+L'opérateur tourne dans le namespace `mysql-operator-system` et surveille tous les namespaces.
+
+### 5.2 Sauvegarder
+
+```bash
+kubectl apply -f operator/config/samples/backup.yaml
+kubectl -n mysql-repl get mbk          # PHASE: Pending -> Running -> Completed
+```
+
+- Le dump est pris sur le **slave** (pas de charge sur le master), avec `--single-transaction --routines --triggers --events --set-gtid-purged=OFF`.
+- Fichier : `/<namespace>/<nom>.sql.gz` dans le PVC `mysql-backups` (créé automatiquement, 1Gi par défaut).
+- `status` contient `file`, `sizeBytes` et `sha256`.
+- Sans `spec.databases`, toutes les bases hors `information_schema`, `performance_schema`, `mysql`, `sys` sont sauvegardées (les comptes et privilèges ne le sont pas).
+
+### 5.3 Restaurer
+
+```bash
+kubectl apply -f operator/config/samples/restore.yaml
+kubectl -n mysql-repl get mrs          # PHASE: Running -> Completed
+bash scripts/verify-replication.sh     # contrôler que la réplication est toujours saine
+```
+
+- La restauration cible le **master** ; le slave (`super_read_only`) reçoit les données par réplication.
+- Le Job vérifie le SHA-256 et l'intégrité gzip avant d'appliquer le dump.
+- Le `MySQLBackup` référencé doit être `Completed` : en attente s'il est en cours, échec s'il est `Failed` ou absent.
+- Restauration partielle : `spec.databases: [appdb]`.
+- Attention : les tables du dump sont recréées (`DROP TABLE` puis `CREATE`) ; les écritures postérieures au backup sur ces tables sont perdues.
+
+### 5.4 Planifier
+
+```bash
+kubectl apply -f operator/config/samples/schedule.yaml   # tous les jours à 02:00, 7 backups conservés
+kubectl -n mysql-repl get mbs
+```
+
+Les backups créés portent le nom `<schedule>-<AAAAMMJJ-HHMMSS>`. Au-delà de `keepLast`, les plus anciens sont supprimés avec leur fichier. `spec.suspend: true` met la planification en pause.
+
+### 5.5 Supprimer un backup
+
+```bash
+kubectl -n mysql-repl delete mbk demo-backup
+```
+
+Un finalizer lance un Job `cleanup-<nom>` qui supprime le fichier du PVC avant de libérer l'objet.
+
+### 5.6 Désinstaller l'opérateur
+
+```bash
+cd operator && make undeploy
+kubectl delete -f operator/config/crd   # supprime aussi tous les MySQLBackup/Restore/Schedule
+```
+
+> Supprimer les CRDs avant les `MySQLBackup` bloque leurs finalizers : supprimer d'abord les backups (`kubectl delete mbk --all -A`), puis l'opérateur, puis les CRDs.
+
 ## Identifiants (démo locale uniquement)
 
 | Usage | Valeur |
@@ -164,4 +234,8 @@ kind delete cluster --name mysql-cluster
 | `kind create cluster` échoue sur `Preparing nodes` | RAM insuffisante pour booter un nouveau nœud systemd | Réutiliser un cluster kind existant (`kind get clusters`) |
 | `ERROR 1045 Access denied for user 'root'` juste après déploiement | `read_only`/`super_read_only` actifs dès l'init, bloquant l'`ALTER USER` interne de l'entrypoint | Ne pas activer ces options dans `my.cnf` initial ; les activer après `START REPLICA` (déjà fait dans `setup-replication.sh`) |
 | PVC bloqué en `Terminating` après suppression d'un pod | Le `StatefulSet` recrée le pod avant la suppression du PVC, qui reste attaché | `kubectl scale statefulset <nom> --replicas=0`, puis supprimer le PVC, puis remonter à `--replicas=1` |
+| `MySQLBackup` en `Failed` | Source injoignable, mauvais Secret/mot de passe, ou aucune base utilisateur | `kubectl -n mysql-repl get mbk <nom> -o jsonpath='{.status.message}'` et `kubectl -n mysql-repl logs job/backup-<nom>` |
+| `MySQLRestore` en `Failed` : `sha256sum: WARNING ... did NOT match` | Dump corrompu ou modifié dans le PVC | Refaire un backup ; ne pas restaurer ce fichier |
+| `MySQLBackup` bloqué en `Terminating` | Le Job `cleanup-<nom>` n'aboutit pas (PVC absent/occupé) ou opérateur arrêté | Vérifier `kubectl -n mysql-repl get jobs` et l'opérateur ; en dernier recours retirer le finalizer `mysql.aia.local/cleanup` |
+| Pod de l'opérateur en `ImagePullBackOff` | Image `mysql-operator:dev` absente du nœud kind | `make kind-load KIND_CLUSTER=<nom>` |
 | `Replica_IO_Running: No` | Mauvais host/port/credentials, ou règle réseau bloquant le port 3306 | Vérifier `SHOW REPLICA STATUS\G` champ `Last_IO_Error`, et la résolution DNS du Service master depuis le pod slave |
