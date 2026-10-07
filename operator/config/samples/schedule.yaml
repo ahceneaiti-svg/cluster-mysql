@@ -1,0 +1,14 @@
+# Backup quotidien à 02:00, 7 derniers conservés.
+apiVersion: mysql.aia.local/v1alpha1
+kind: MySQLBackupSchedule
+metadata:
+  name: nightly
+  namespace: mysql-repl
+spec:
+  schedule: "0 2 * * *"
+  keepLast: 7
+  template:
+    source:
+      host: mysql-slave.mysql-repl.svc.cluster.local
+    storage:
+      claimName: mysql-backups

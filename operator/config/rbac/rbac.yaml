@@ -1,0 +1,48 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mysql-operator-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mysql-operator
+  namespace: mysql-operator-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: mysql-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: mysql-operator
+subjects:
+  - kind: ServiceAccount
+    name: mysql-operator
+    namespace: mysql-operator-system
+---
+# Élection de leader (--leader-elect)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: mysql-operator-leader-election
+  namespace: mysql-operator-system
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mysql-operator-leader-election
+  namespace: mysql-operator-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: mysql-operator-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: mysql-operator
+    namespace: mysql-operator-system

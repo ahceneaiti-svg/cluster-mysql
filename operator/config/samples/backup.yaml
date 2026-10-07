@@ -1,0 +1,13 @@
+# Backup ponctuel, pris sur le slave pour ne pas charger le master.
+apiVersion: mysql.aia.local/v1alpha1
+kind: MySQLBackup
+metadata:
+  name: demo-backup
+  namespace: mysql-repl
+spec:
+  source:
+    host: mysql-slave.mysql-repl.svc.cluster.local
+  # databases: [appdb]   # vide = toutes les bases hors schémas système
+  storage:
+    claimName: mysql-backups
+    size: 1Gi
